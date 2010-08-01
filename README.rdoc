@@ -1,0 +1,33 @@
+= google_code_migrate
+
+== Setup
+
+1. Copy this plugin to your Redmine vendor\plugins directory.
+2. Add a new custom issue field called "Legacy ID" and test it.
+3. Install the redmine_vote plugin (for your starred issue counts).
+4. Follow the Migrate instructions below.
+
+== Migrate
+
+To migrate from Google Code, you must first export your site to XML. Since Google does not support this, you can use google-code-export to scrape your data:
+
+  http://github.com/nbolton/google-code-export
+
+Once you have your .xml file, run this command from your redmine directory:
+
+  rake redmine:migrate_from_google_code filename=\path\to\myproject_google-code-export.xml project=myproject
+
+You should see something like:
+
+  reading: \path\to\myproject_google-code-export.xml
+  importing issue: 1
+  importing issue: 2
+  importing issue: 3
+  importing issue: 4
+  importing issue: 5
+  importing issue: 6
+  importing issue: 7
+  importing issue: 8
+  importing issue: 9
+  importing issue: 10
+  imported 10 issues
