@@ -24,8 +24,35 @@ namespace :redmine do
   task :migrate_from_google_code => :environment do
     
     class GoogleCodeMigrate
+      
       require 'rexml/document'
+      require 'open-uri'
+      
       include REXML
+
+      class GoogleCodeAttachment
+        
+        def initialize(file, filename)
+          @file = file
+          @filename = filename
+        end
+
+        def original_filename
+          @filename
+        end
+
+        def read(*args)
+          @file.read(*args)
+        end
+
+        def size(*args)
+          @file.size(*args)
+        end
+
+        def content_type
+          ''
+        end
+      end
 
       def migrate(filename, project)
         # load uploaded xml in to rexml document
@@ -38,7 +65,9 @@ namespace :redmine do
         @issues = Issue.find(:all)
         @project = Project.find(project)
         
-        i = 0
+        # save issues in a cache so we can re-use them in a 2nd pass
+        @issue_cache = Hash.new
+        
         puts 'importing issues...'
         XPath.each(doc, '/googleCodeExport/issues/issue') { |el|
           legacy_id = el.attributes['id']
@@ -48,6 +77,9 @@ namespace :redmine do
           
           labels = el.elements.to_a('labels/label')
           comments = el.elements.to_a('comments/comment')
+          details = clean_html(el.elements['details'].text)
+          reporter = el.elements['reporter'].text
+          google_user = '@Google user: ' + reporter + "@\n\n"
           
           issue.project = @project
           issue.author = User.anonymous
@@ -58,7 +90,7 @@ namespace :redmine do
           issue.votes_value = el.attributes['stars']
           issue.fixed_version = find_version(labels, 'Milestone')
           issue.subject = el.elements['summary'].text
-          issue.description = clean_html(el.elements['details'].text)
+          issue.description = google_user + details
           issue.save_with_validation!()
           
           # set custom values after saving
@@ -66,39 +98,46 @@ namespace :redmine do
           set_custom_value(issue, 'Found in version', 
                            find_in_labels(labels, /Version-(.*)/))
 
+          # reset attachments before creating the journal, since the files
+          # from comments are added to the issue, not the comments.
+          reset_attachments(issue.id)
+          create_attachments(issue, el)
+
           reset_journal(issue.id)
           create_journal(issue, comments)
 
           # save once more (e.g. for status, etc)
           issue.save_with_validation!
           
-          # counter so we can say how many issues were imported
-          i += 1
+          # save as struct so we have both issue and xml element
+          ip = Struct.new(:issue, :el).new
+          ip.issue = issue
+          ip.el = el
+          @issue_cache[legacy_id] = ip
         }
         puts 'done'
 
+        # create relations after first pass, as we need to have all
+        # of the issues already in the db.
         puts 'creating issue relations...'
-        XPath.each(doc, '/googleCodeExport/issues/issue') { |el|
-          legacy_id = el.attributes['id']
-
-          issue = find_or_new_issue(legacy_id)
-          if not issue.id
-            raise 'issue not found: ' + String(legacy_id)
-          end
-
-          # create relations (duplicate, blocks, etc)
-          create_relations(el, issue)
+        @issue_cache.each { |k,v|
+          reset_relations(v.issue.id)
+          create_relations(v.el, v.issue)
         }
         puts 'done'
         
-        puts 'imported ' + String(i) + ' issues'
+        puts 'imported ' + String(@issue_cache.length) + ' issues'
       end
 
       private
 
+      def reset_relations(issue_id)
+        IssueRelation.delete_all("issue_from_id = " + String(issue_id))
+      end
+
       def create_relations(el, issue_from)
         if el.elements['status'].text == 'Duplicate'
-          issue_to = get_issue(el.elements['mergeInto'].text)
+          issue_to = get_issue_from_cache(el.elements['mergeInto'].text)
           
           r = IssueRelation.new
           r.relation_type = IssueRelation::TYPE_DUPLICATES
@@ -110,7 +149,7 @@ namespace :redmine do
 
         el.elements.to_a('relations/relation').each { |relation|
           type = relation.attributes['type']
-          issue_to = get_issue(relation.attributes['id'])
+          issue_to = get_issue_from_cache(relation.attributes['id'])
           
           case type
           when 'Blocks'
@@ -123,6 +162,14 @@ namespace :redmine do
         }
       end
 
+      def get_issue_from_cache(legacy_id)
+        if @issue_cache.has_key?(legacy_id)
+          return @issue_cache[legacy_id].issue
+        else
+          throw 'issue not in cache: ' + legacy_id
+        end
+      end
+
       def find_in_labels(labels, re)
         labels.each { |label|
           match = label.text.match(re)
@@ -133,6 +180,39 @@ namespace :redmine do
         return nil
       end
       
+      def reset_attachments(issue_id)
+        Attachment.delete_all("container_type = 'Issue' " + 
+                              "and container_id = " + String(issue_id))
+      end
+      
+      def create_attachments(issue, el)
+        created = Array.new
+        el.elements.to_a('attachments/attachment').each { |attach|
+          filename = attach.attributes['filename']
+          file = open(attach.text)
+
+          # redmine doesn't like empty files
+          if file.size <= 0
+            puts 'ignoring empty file: ' + filename
+            next
+          end
+          
+          # create file wrapper for redmine
+          file_info = GoogleCodeAttachment.new(file, filename)
+          
+          # create the redmine attachment
+          a = Attachment.new
+          a.file = file_info
+          a.author = User.anonymous
+          a.container = issue
+          a.save_with_validation!
+          puts 'created: ' + filename
+          
+          created << a
+        }
+        return created
+      end
+
       def reset_journal(issue_id)
         Journal.find(:all, :conditions => {
                        :journalized_id => issue_id,
@@ -248,6 +328,13 @@ namespace :redmine do
                                              :value => new_found_in)
             end
           end
+          
+          # after saving, create the attachments
+          create_attachments(issue, comment).each { |a|
+            j.details << JournalDetail.new(:property => 'attachment',
+                                           :prop_key => a.id,
+                                           :value => a.filename)
+          }
           
           j.save_with_validation!
         }
