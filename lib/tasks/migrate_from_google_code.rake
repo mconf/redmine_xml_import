@@ -39,6 +39,7 @@ namespace :redmine do
         @project = Project.find(project)
         
         i = 0
+        puts 'importing issues...'
         XPath.each(doc, '/googleCodeExport/issues/issue') { |el|
           legacy_id = el.attributes['id']
           
@@ -47,13 +48,13 @@ namespace :redmine do
           
           labels = el.elements.to_a('labels/label')
           comments = el.elements.to_a('comments/comment')
-
+          
           issue.project = @project
           issue.author = User.anonymous
           issue.created_on = parse_datetime(el.elements['reportDate'].text)
           issue.tracker = find_tracker(labels)
-          issue.status = find_status(el.elements['status'].text)
           issue.priority = find_priority(labels)
+          issue.status = find_status_for_issue(el.elements['status'].text)
           issue.votes_value = el.attributes['stars']
           issue.fixed_version = find_version(labels, 'Milestone')
           issue.subject = el.elements['summary'].text
@@ -64,23 +65,63 @@ namespace :redmine do
           set_custom_value(issue, 'Legacy ID', legacy_id)
           set_custom_value(issue, 'Found in version', 
                            find_in_labels(labels, /Version-(.*)/))
-          
+
           reset_journal(issue.id)
           create_journal(issue, comments)
 
-          
-          
           # save once more (e.g. for status, etc)
           issue.save_with_validation!
           
           # counter so we can say how many issues were imported
           i += 1
         }
+        puts 'done'
+
+        puts 'creating issue relations...'
+        XPath.each(doc, '/googleCodeExport/issues/issue') { |el|
+          legacy_id = el.attributes['id']
+
+          issue = find_or_new_issue(legacy_id)
+          if not issue.id
+            raise 'issue not found: ' + String(legacy_id)
+          end
+
+          # create relations (duplicate, blocks, etc)
+          create_relations(el, issue)
+        }
+        puts 'done'
         
         puts 'imported ' + String(i) + ' issues'
       end
 
       private
+
+      def create_relations(el, issue_from)
+        if el.elements['status'].text == 'Duplicate'
+          issue_to = get_issue(el.elements['mergeInto'].text)
+          
+          r = IssueRelation.new
+          r.relation_type = IssueRelation::TYPE_DUPLICATES
+          r.issue_from = issue_from
+          r.issue_to = issue_to
+          r.save_with_validation!
+          
+        end
+
+        el.elements.to_a('relations/relation').each { |relation|
+          type = relation.attributes['type']
+          issue_to = get_issue(relation.attributes['id'])
+          
+          case type
+          when 'Blocks'
+            r = IssueRelation.new
+            r.relation_type = IssueRelation::TYPE_BLOCKS
+            r.issue_from = issue_from
+            r.issue_to = issue_to
+            r.save_with_validation!
+          end
+        }
+      end
 
       def find_in_labels(labels, re)
         labels.each { |label|
@@ -227,6 +268,16 @@ namespace :redmine do
         return html
       end
 
+      def find_status_for_issue(name)
+        # google code does not have a concept of issue relations, so instead
+        # of setting status to Duplicate, set to invalid, and later on, create
+        # the duplicate relation.
+        if name == 'Duplicate'
+          name = 'Invalid'
+        end
+        return find_status(name)
+      end
+
       def find_status(name)
         status = IssueStatus.find(:first, :conditions => { :name => name })
         raise "Unknown status: " + name unless status
@@ -288,9 +339,18 @@ namespace :redmine do
         end
       end
 
-      def find_or_new_issue(legacy_id)
-        cf = CustomField.find_by_name('Legacy ID')
+      def get_issue(legacy_id)
+        found = find_issue(legacy_id)
+        if found
+          return found
+        else
+          raise 'issue does not exist: ' + legacy_id
+        end
+      end
 
+      def find_issue(legacy_id)
+        cf = CustomField.find_by_name('Legacy ID')
+        
         # TODO: see if we can use CustomField.find instead of looping
         @issues.each { |issue|
           cv = find_custom_value(issue, cf)
@@ -299,8 +359,16 @@ namespace :redmine do
           end
         }
         
-        # if no issue was found in search loop, create a new one
-        return Issue.new
+        return nil
+      end
+
+      def find_or_new_issue(legacy_id)
+        found = find_issue(legacy_id)
+        if found
+          return found
+        else
+          return Issue.new
+        end
       end
 
       def set_custom_value(issue, name, value)
