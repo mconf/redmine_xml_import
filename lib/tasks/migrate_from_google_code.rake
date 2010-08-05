@@ -94,7 +94,7 @@ namespace :redmine do
           issue.status = find_status_for_issue(el.elements['status'].text)
           issue.votes_value = el.attributes['stars']
           issue.fixed_version = find_version(labels, 'Milestone')
-          issue.subject = el.elements['summary'].text
+          issue.subject = CGI.unescapeHTML(el.elements['summary'].text)
           issue.description = google_user + details
           issue.save_with_validation!()
           
