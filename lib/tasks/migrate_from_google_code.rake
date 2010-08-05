@@ -378,11 +378,14 @@ namespace :redmine do
           j.save_with_validation!
         }
       end
-
+      
       def parse_datetime(string)
-        return Date.strptime(string, '%Y-%m-%d %H:%M%:%S')
+        return Date.strptime(string, '%Y-%m-%d %H:%M:%S')
+      rescue
+        print 'could not parse date: ', string, "\n"
+        raise
       end
-
+      
       def clean_html(html)
         # get unescaped version
         html = CGI.unescapeHTML(html)
