@@ -29,7 +29,7 @@ namespace :redmine do
       require 'open-uri'
       
       include REXML
-
+      
       class GoogleCodeAttachment
         
         def initialize(file, filename)
@@ -54,25 +54,30 @@ namespace :redmine do
         end
       end
 
-      def migrate(filename, project)
-        # load uploaded xml in to rexml document
-        puts 'reading: ' + filename
-        file = File.new(filename, 'r')
-
-        doc = Document.new(file.read)
-          
+      def initialize
+        # make google code id unique so we can import from other sites
+        @id_format = 'gc-%s'
+        
         # select all issues so we can find by custom value (legacy id)
         @issues = Issue.find(:all)
-        @project = Project.find(project)
         
         # save issues in a cache so we can re-use them in a 2nd pass
         @issue_cache = Hash.new
-        
+      end
+
+      def migrate(filename, project)
+        @project = Project.find(project)
+
+        # load uploaded xml in to rexml document
+        puts 'reading: ' + filename
+        file = File.new(filename, 'r')
+        doc = Document.new(file.read)
+                
         puts 'importing issues...'
         XPath.each(doc, '/googleCodeExport/issues/issue') { |el|
-          legacy_id = el.attributes['id']
+          legacy_id = @id_format % el.attributes['id']
           
-          puts 'importing issue: ' + legacy_id
+          puts 'issue: ' + legacy_id
           issue = find_or_new_issue(legacy_id)
           
           labels = el.elements.to_a('labels/label')
@@ -84,8 +89,8 @@ namespace :redmine do
           issue.project = @project
           issue.author = User.anonymous
           issue.created_on = parse_datetime(el.elements['reportDate'].text)
-          issue.tracker = find_tracker(labels)
-          issue.priority = find_priority(labels)
+          issue.tracker = find_tracker(labels, 'Type-Defect')
+          issue.priority = find_priority(labels, 'Priority-Medium')
           issue.status = find_status_for_issue(el.elements['status'].text)
           issue.votes_value = el.attributes['stars']
           issue.fixed_version = find_version(labels, 'Milestone')
@@ -137,7 +142,8 @@ namespace :redmine do
 
       def create_relations(el, issue_from)
         if el.elements['status'].text == 'Duplicate'
-          issue_to = get_issue_from_cache(el.elements['mergeInto'].text)
+          legacy_id = @id_format % el.elements['mergeInto'].text
+          issue_to = get_issue_from_cache(legacy_id)
           
           r = IssueRelation.new
           r.relation_type = IssueRelation::TYPE_DUPLICATES
@@ -149,7 +155,8 @@ namespace :redmine do
 
         el.elements.to_a('relations/relation').each { |relation|
           type = relation.attributes['type']
-          issue_to = get_issue_from_cache(relation.attributes['id'])
+          legacy_id = legacy_id = @id_format % relation.attributes['id']
+          issue_to = get_issue_from_cache(legacy_id)
           
           case type
           when 'Blocks'
@@ -184,21 +191,54 @@ namespace :redmine do
         Attachment.delete_all("container_type = 'Issue' " + 
                               "and container_id = " + String(issue_id))
       end
+
+      def download_attachment(uri_str)
+        uri = URI.parse(uri_str)
+        http = Net::HTTP.new(uri.host)
+        get = Net::HTTP::Get.new(uri.path + '?' + uri.query)
+        resp = http.request(get)
+        result = Struct.new(:file, :invalid).new
+        
+        # dectct google's annoying token expiry
+        if resp.code != '200'
+          result.invalid = true
+          if resp.header['location'].match(/accounts\/ServiceLogin/)
+            # seems to be the url that google goes to when the url has an
+            # expired token (yuck)
+            puts 'expired google attachment token'
+          else
+            puts 'unrecognised redirect: ' + resp.header['location']
+          end
+        else
+          io = StringIO.new
+          io << resp.body
+          io.rewind
+          result.file = io
+        end
+        
+        return result
+      end
       
       def create_attachments(issue, el)
         created = Array.new
         el.elements.to_a('attachments/attachment').each { |attach|
-          filename = attach.attributes['filename']
-          file = open(attach.text)
+          
+          filename = attach.attributes['filename'] 
+          resp = download_attachment(attach.text)
 
+          if resp.invalid
+            puts 'ignoring invalid attachment: ' + filename
+            next
+          end
+          
           # redmine doesn't like empty files
-          if file.size <= 0
-            puts 'ignoring empty file: ' + filename
+          if resp.file.size <= 0
+            puts 'ignoring empty attachment: ' + filename
             next
           end
           
           # create file wrapper for redmine
-          file_info = GoogleCodeAttachment.new(file, filename)
+          file_info = GoogleCodeAttachment.new(resp.file, filename)
           
           # create the redmine attachment
           a = Attachment.new
@@ -206,7 +246,6 @@ namespace :redmine do
           a.author = User.anonymous
           a.container = issue
           a.save_with_validation!
-          puts 'created: ' + filename
           
           created << a
         }
@@ -371,20 +410,20 @@ namespace :redmine do
         return status
       end
 
-      def find_priority(labels)
+      def find_priority(labels, default_name=nil)
         labels.each { |label|
           priority = map_priority(label.text)
           return priority if priority
         }
-        return nil
+        return map_priority(default_name) if default_name
       end
 
-      def find_tracker(labels)
+      def find_tracker(labels, default_name=nil)
         labels.each { |label|
           tracker = map_tracker(label.text)
           return tracker if tracker
         }
-        return nil
+        return map_tracker(default_name) if default_name
       end
       
       def find_version(labels, label_prefix)
