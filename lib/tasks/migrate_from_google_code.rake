@@ -503,6 +503,9 @@ namespace :redmine do
       def set_custom_value(issue, name, value)
         cf = CustomField.find_by_name(name)
         cv = find_custom_value(issue, cf)
+        if not cv
+          raise 'custom value not found: ' + name
+        end
         cv.value = value
         cv.save_with_validation!
       end
@@ -513,6 +516,7 @@ namespace :redmine do
             return cv
           end
         }
+        return nil
       end
 
     end
