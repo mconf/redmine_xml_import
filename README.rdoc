@@ -1,4 +1,4 @@
-= google_code_migrate
+= xml_import
 
 == Setup
 
@@ -7,7 +7,9 @@
 3. Install the redmine_vote plugin (for your starred issue counts).
 4. Follow the Migrate instructions below.
 
-== Migrate
+== Import
+
+=== Google Code
 
 To migrate from Google Code, you must first export your site to XML. Since Google does not support this, you can use google-code-export to scrape your data:
 
@@ -17,17 +19,14 @@ Once you have your .xml file, run this command from your redmine directory:
 
   rake redmine:migrate_from_google_code filename=\path\to\myproject_google-code-export.xml project=myproject
 
-You should see something like:
+=== Source Forge
 
-  reading: \path\to\myproject_google-code-export.xml
-  importing issue: 1
-  importing issue: 2
-  importing issue: 3
-  importing issue: 4
-  importing issue: 5
-  importing issue: 6
-  importing issue: 7
-  importing issue: 8
-  importing issue: 9
-  importing issue: 10
-  imported 10 issues
+Find your Group ID by poking around your project, it should appear in a URL (SourceForge doesn't make this bit easy).
+
+Then visit the following URL, and replace <group_id> with your group ID.
+
+  https://sourceforge.net/export/xml_export.php?group_id=<group_id>
+
+Then run the following command with the result:
+
+  rake redmine:migrate_from_source_forge filename=\path\to\synergy_export.xml project=myproject
