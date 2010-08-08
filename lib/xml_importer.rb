@@ -1,6 +1,30 @@
 namespace :redmine do
 
   class XmlImporter
+
+    class AttachmentInfo
+      
+      def initialize(file, filename)
+        @file = file
+        @filename = filename
+      end
+
+      def original_filename
+        @filename
+      end
+
+      def read(*args)
+        @file.read(*args)
+      end
+
+      def size(*args)
+        @file.size(*args)
+      end
+
+      def content_type
+        ''
+      end
+    end
     
     def initialize
       # select all issues so we can find by custom value (legacy id)
@@ -74,6 +98,61 @@ namespace :redmine do
         Journal.delete(journal.id)
         JournalDetail.delete_all({:journal_id => journal.id})
       }
+    end
+
+    def download_attachment(uri_str)
+      uri = URI.parse(uri_str)
+      http = Net::HTTP.new(uri.host)
+      get = Net::HTTP::Get.new(uri.path + '?' + uri.query)
+      resp = http.request(get)
+      result = Struct.new(:file, :invalid).new
+      
+      # dectct google's annoying token expiry
+      if resp.code != '200'
+        result.invalid = true
+        if resp.header['location'].match(/accounts\/ServiceLogin/)
+          # seems to be the url that google goes to when the url has an
+          # expired token (yuck)
+          puts 'expired google attachment token'
+        else
+          puts 'unrecognised redirect: ' + resp.header['location']
+        end
+      else
+        io = StringIO.new
+        io << resp.body
+        io.rewind
+        result.file = io
+      end
+      
+      return result
+    end
+
+    def create_attachment(uri, filename, issue, created_on=nil)
+      resp = download_attachment(uri)
+      
+      if resp.invalid
+        puts 'ignoring invalid attachment: ' + filename
+        next
+      end
+      
+      # redmine doesn't like empty files
+      if resp.file.size <= 0
+        puts 'ignoring empty attachment: ' + filename
+        next
+      end
+      
+      # create file wrapper for redmine
+      file_info = AttachmentInfo.new(resp.file, filename)
+      
+      # create the redmine attachment
+      a = Attachment.new
+      a.file = file_info
+      a.author = User.anonymous
+      a.container = issue
+      a.created_on = created_on
+      a.save_with_validation!
+      
+      return a
     end
 
   end

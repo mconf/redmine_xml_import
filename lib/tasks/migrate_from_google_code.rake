@@ -30,30 +30,6 @@ namespace :redmine do
       
       include REXML
       
-      class GoogleCodeAttachment
-        
-        def initialize(file, filename)
-          @file = file
-          @filename = filename
-        end
-
-        def original_filename
-          @filename
-        end
-
-        def read(*args)
-          @file.read(*args)
-        end
-
-        def size(*args)
-          @file.size(*args)
-        end
-
-        def content_type
-          ''
-        end
-      end
-
       def initialize
         super
         
@@ -183,63 +159,12 @@ namespace :redmine do
         }
         return nil
       end
-      
-      def download_attachment(uri_str)
-        uri = URI.parse(uri_str)
-        http = Net::HTTP.new(uri.host)
-        get = Net::HTTP::Get.new(uri.path + '?' + uri.query)
-        resp = http.request(get)
-        result = Struct.new(:file, :invalid).new
-        
-        # dectct google's annoying token expiry
-        if resp.code != '200'
-          result.invalid = true
-          if resp.header['location'].match(/accounts\/ServiceLogin/)
-            # seems to be the url that google goes to when the url has an
-            # expired token (yuck)
-            puts 'expired google attachment token'
-          else
-            puts 'unrecognised redirect: ' + resp.header['location']
-          end
-        else
-          io = StringIO.new
-          io << resp.body
-          io.rewind
-          result.file = io
-        end
-        
-        return result
-      end
-      
+            
       def create_attachments(issue, el)
         created = Array.new
         el.elements.to_a('attachments/attachment').each { |attach|
-          
-          filename = attach.attributes['filename'] 
-          resp = download_attachment(attach.text)
-
-          if resp.invalid
-            puts 'ignoring invalid attachment: ' + filename
-            next
-          end
-          
-          # redmine doesn't like empty files
-          if resp.file.size <= 0
-            puts 'ignoring empty attachment: ' + filename
-            next
-          end
-          
-          # create file wrapper for redmine
-          file_info = GoogleCodeAttachment.new(resp.file, filename)
-          
-          # create the redmine attachment
-          a = Attachment.new
-          a.file = file_info
-          a.author = User.anonymous
-          a.container = issue
-          a.save_with_validation!
-          
-          created << a
+          filename = attach.attributes['filename']
+          created << create_attachment(attach.text, filename, issue)
         }
         return created
       end

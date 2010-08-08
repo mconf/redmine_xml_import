@@ -33,6 +33,10 @@ namespace :redmine do
         
         # make source forge id unique so we can import from other sites
         @id_format = 'sf-%s'
+
+        # the other 3 id values don't seem to matter, just as long as they're
+        # valid.
+        @attach_format = 'https://sourceforge.net/tracker/download.php?group_id=59275&atid=490469&file_id=%s&aid=2969849'
       end
 
       def migrate(filename, project)
@@ -71,6 +75,11 @@ namespace :redmine do
           set_custom_value(issue, 'Found in version', 
                            get_version(get_field(el, 'artifact_group_id')))
           
+          # reset attachments before creating the journal, since the files
+          # from comments are added to the issue, not the comments.
+          reset_attachments(issue.id)
+          create_attachments(issue, el)
+          
           reset_journal(issue.id)
           messages_xpath = 'field[@name="artifact_messages"]/message'
           messages = el.elements.to_a(messages_xpath)
@@ -87,6 +96,33 @@ namespace :redmine do
         puts 'done'
         
         puts 'imported ' + String(@issue_cache.length) + ' issues'
+      end
+
+      def create_attachments(issue, el)
+        created = Array.new
+
+        # source forge stores their files in history. odd.
+        history_xpath = "field[@name='artifact_history']/history"
+        history = el.elements.to_a(history_xpath)
+
+        history.each { |h_el|
+          if get_field(h_el, 'field_name') == 'File Added'
+            
+            # the file info is actually in the old_value field, which makes
+            # little sense - but there's no other field.
+            file_info = get_field(h_el, 'old_value')
+            
+            match = file_info.match(/(\d+): (.*)/)
+            file_id = match[1]
+            filename = match[2]
+            
+            created_on = parse_date(get_field(h_el, 'entrydate'))
+
+            created << create_attachment(@attach_format % file_id,
+                                         filename, issue, created_on)
+          end
+        }
+        return created
       end
 
       def get_version(sf_group_id)
@@ -134,7 +170,7 @@ namespace :redmine do
         end
         IssuePriority.find(:first, :conditions => { :name => name })
       end
-      
+
       def create_journal(issue, messages, history)
         messages.each { |el|
           notes = get_field(el, 'body')
