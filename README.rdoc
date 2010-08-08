@@ -29,4 +29,4 @@ Then visit the following URL, and replace <group_id> with your group ID.
 
 Then run the following command with the result:
 
-  rake redmine:migrate_from_source_forge filename=\path\to\synergy_export.xml project=myproject
+  rake redmine:migrate_from_source_forge filename=\path\to\myproject_export.xml project=myproject
