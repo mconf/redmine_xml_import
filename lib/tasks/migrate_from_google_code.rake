@@ -44,63 +44,76 @@ namespace :redmine do
         puts 'reading: ' + filename
         file = File.new(filename, 'r')
         doc = Document.new(file.read)
-                
+        
         puts 'importing issues...'
         XPath.each(doc, '/googleCodeExport/issues/issue') { |el|
-          legacy_id = @id_format % el.attributes['id']
+          begin
+            legacy_id = @id_format % el.attributes['id']
           
-          puts 'issue: ' + legacy_id
-          issue = find_or_new_issue(legacy_id)
+            puts 'issue: ' + legacy_id
+            issue = find_or_new_issue(legacy_id)
           
-          labels = el.elements.to_a('labels/label')
-          comments = el.elements.to_a('comments/comment')
-          details = clean_html(el.elements['details'].text)
-          reporter = el.elements['reporter'].text
-          google_user = '@Google user: ' + reporter + "@\n\n"
+            labels = el.elements.to_a('labels/label')
+            comments = el.elements.to_a('comments/comment')
+            details = clean_html(el.elements['details'].text)
+            reporter = el.elements['reporter'].text
+            google_user = '@Google user: ' + reporter + "@\n\n"
           
-          issue.project = @project
-          issue.author = User.anonymous
-          issue.created_on = parse_datetime(el.elements['reportDate'].text)
-          issue.tracker = find_tracker(labels, 'Type-Defect')
-          issue.priority = find_priority(labels, 'Priority-Medium')
-          issue.status = find_status_for_issue(el.elements['status'].text)
-          issue.votes_value = el.attributes['stars']
-          issue.fixed_version = find_version(labels, 'Milestone')
-          issue.subject = CGI.unescapeHTML(el.elements['summary'].text)
-          issue.description = google_user + details
-          issue.save_with_validation!()
+            issue.project = @project
+            issue.author = User.anonymous
+            issue.created_on = parse_datetime(el.elements['reportDate'].text)
+            issue.tracker = find_tracker(labels, 'Type-Defect')
+            issue.priority = find_priority(labels, 'Priority-Medium')
+            issue.status = find_status_for_issue(el.elements['status'].text)
+            issue.votes_value = el.attributes['stars']
+            issue.fixed_version = find_version(labels, 'Milestone')
+            issue.subject = CGI.unescapeHTML(el.elements['summary'].text)
+            issue.description = google_user + details
+            issue.save_with_validation!()
           
-          # set custom values after saving
-          set_custom_value(issue, 'Legacy ID', legacy_id)
-          set_custom_value(issue, 'Found in version', 
-                           find_in_labels(labels, /Version-(.*)/))
+            # set custom values after saving
+            set_custom_value(issue, 'Legacy ID', legacy_id)
+            set_custom_value(issue, 'Found in version', 
+                             find_in_labels(labels, /Version-(.*)/))
 
-          # reset attachments before creating the journal, since the files
-          # from comments are added to the issue, not the comments.
-          reset_attachments(issue.id)
-          create_attachments(issue, el)
+            # reset attachments before creating the journal, since the files
+            # from comments are added to the issue, not the comments.
+            reset_attachments(issue.id)
+            create_attachments(issue, el)
 
-          reset_journal(issue.id)
-          create_journal(issue, comments)
+            reset_journal(issue.id)
+            create_journal(issue, comments)
 
-          # TODO: is this really necessary?
-          # save once more (e.g. for status, etc)
-          issue.save_with_validation!
+            # TODO: is this really necessary?
+            # save once more (e.g. for status, etc)
+            issue.save_with_validation!
           
-          # save as struct so we have both issue and xml element
-          ip = Struct.new(:issue, :el).new
-          ip.issue = issue
-          ip.el = el
-          @issue_cache[legacy_id] = ip
+            # save as struct so we have both issue and xml element
+            ip = Struct.new(:issue, :el).new
+            ip.issue = issue
+            ip.el = el
+            @issue_cache[legacy_id] = ip
+          
+          rescue => err
+            puts "failed to create issue #{legacy_id}: #{err}"
+          end
         }
         puts 'done'
 
-        # create relations after first pass, as we need to have all
-        # of the issues already in the db.
-        puts 'creating issue relations...'
+	puts 'deleting existing relations...'        
         @issue_cache.each { |k,v|
           reset_relations(v.issue.id)
-          create_relations(v.el, v.issue)
+        }
+        puts 'done'
+
+	puts 'creating issue relations...'
+        @issue_cache.each { |k,v|
+	  begin
+            create_relations(v.el, v.issue)
+          rescue => err
+            # show error and go to next
+            puts "create relation failed for issue #{v.issue.id}: #{err}"
+          end
         }
         puts 'done'
         
@@ -123,7 +136,6 @@ namespace :redmine do
           r.issue_from = issue_from
           r.issue_to = issue_to
           r.save_with_validation!
-          
         end
 
         el.elements.to_a('relations/relation').each { |relation|
@@ -277,9 +289,11 @@ namespace :redmine do
           
           # after saving, create the attachments
           create_attachments(issue, comment).each { |a|
-            j.details << JournalDetail.new(:property => 'attachment',
-                                           :prop_key => a.id,
-                                           :value => a.filename)
+            if a
+              j.details << JournalDetail.new(:property => 'attachment',
+                                             :prop_key => a.id,
+                                             :value => a.filename)
+            end
           }
           
           j.save_with_validation!

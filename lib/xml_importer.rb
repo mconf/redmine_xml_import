@@ -49,7 +49,7 @@ namespace :redmine do
       # TODO: see if we can use CustomField.find instead of looping
       @issues.each { |issue|
         cv = find_custom_value(issue, cf)
-        if cv.value == legacy_id
+	if cv and cv.value == legacy_id
           return issue
         end
       }
@@ -132,13 +132,13 @@ namespace :redmine do
       
       if resp.invalid
         puts 'ignoring invalid attachment: ' + filename
-        next
+        return nil
       end
       
       # redmine doesn't like empty files
       if resp.file.size <= 0
         puts 'ignoring empty attachment: ' + filename
-        next
+        return nil
       end
       
       # create file wrapper for redmine
