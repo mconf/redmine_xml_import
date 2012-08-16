@@ -65,16 +65,16 @@ namespace :redmine do
             issue.tracker = find_tracker(labels, 'Type-Defect')
             issue.priority = find_priority(labels, 'Priority-Medium')
             issue.status = find_status_for_issue(el.elements['status'].text)
-            issue.votes_value = el.attributes['stars']
+            #issue.votes_value = el.attributes['stars']
             issue.fixed_version = find_version(labels, 'Milestone')
             issue.subject = CGI.unescapeHTML(el.elements['summary'].text)
             issue.description = google_user + details
-            issue.save_with_validation!()
+            issue.save!()
           
             # set custom values after saving
-            set_custom_value(issue, 'Legacy ID', legacy_id)
-            set_custom_value(issue, 'Found in version', 
-                             find_in_labels(labels, /Version-(.*)/))
+            #set_custom_value(issue, 'Legacy ID', legacy_id)
+            #set_custom_value(issue, 'Found in version', 
+            #                 find_in_labels(labels, /Version-(.*)/))
 
             # reset attachments before creating the journal, since the files
             # from comments are added to the issue, not the comments.
@@ -86,7 +86,7 @@ namespace :redmine do
 
             # TODO: is this really necessary?
             # save once more (e.g. for status, etc)
-            issue.save_with_validation!
+            issue.save!
           
             # save as struct so we have both issue and xml element
             ip = Struct.new(:issue, :el).new
@@ -135,7 +135,7 @@ namespace :redmine do
           r.relation_type = IssueRelation::TYPE_DUPLICATES
           r.issue_from = issue_from
           r.issue_to = issue_to
-          r.save_with_validation!
+          r.save!
         end
 
         el.elements.to_a('relations/relation').each { |relation|
@@ -149,7 +149,7 @@ namespace :redmine do
             r.relation_type = IssueRelation::TYPE_BLOCKS
             r.issue_from = issue_from
             r.issue_to = issue_to
-            r.save_with_validation!
+            r.save!
           end
         }
       end
@@ -296,7 +296,7 @@ namespace :redmine do
             end
           }
           
-          j.save_with_validation!
+          j.save!
         }
       end
       
