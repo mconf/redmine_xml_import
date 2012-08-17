@@ -73,7 +73,7 @@ namespace :redmine do
         raise 'custom value not found: ' + name
       end
       cv.value = value
-      cv.save_with_validation!
+      cv.save!
     end
 
     def find_custom_value(issue, cf)
@@ -150,7 +150,7 @@ namespace :redmine do
       a.author = User.anonymous
       a.container = issue
       a.created_on = created_on
-      a.save_with_validation!
+      a.save!
       
       return a
     end
