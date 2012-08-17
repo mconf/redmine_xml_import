@@ -57,10 +57,11 @@ namespace :redmine do
             comments = el.elements.to_a('comments/comment')
             details = clean_html(el.elements['details'].text)
             reporter = el.elements['reporter'].text
+            owner = el.elements['owner'].text if el.elements['owner']
             google_user = '@Google user: ' + reporter + "@\n\n"
           
             issue.project = @project
-            issue.author = User.anonymous
+            issue.author = find_user_or_anonymous(reporter)
             issue.created_on = parse_datetime(el.elements['reportDate'].text)
             issue.tracker = find_tracker(labels, 'Type-Defect')
             issue.priority = find_priority(labels, 'Priority-Medium')
@@ -69,6 +70,7 @@ namespace :redmine do
             issue.fixed_version = find_version(labels, 'Milestone')
             issue.subject = CGI.unescapeHTML(el.elements['summary'].text)
             issue.description = google_user + details
+            issue.assigned_to = find_user_or_nil(owner)
             issue.save!()
           
             # set custom values after saving
@@ -220,7 +222,7 @@ namespace :redmine do
           last_date = created_on
           
           j = Journal.new(:journalized => issue,
-                          :user => User.anonymous,
+                          :user => find_user_or_anonymous(author),
                           :notes => notes,
                           :created_on => created_on)
           
@@ -386,6 +388,18 @@ namespace :redmine do
         end
         if name
           @project.trackers.find(:first, :conditions => { :name => name })
+        end
+      end
+
+      def find_user_or_anonymous(login)
+        find_user_or_nil(login) || User.anonymous
+      end
+
+      def find_user_or_nil(login)
+        unless login.nil?
+          User.find_by_login(login) || User.find_by_mail(login) || nil
+        else
+          nil
         end
       end
 
