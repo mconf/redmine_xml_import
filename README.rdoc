@@ -17,7 +17,11 @@ To migrate from Google Code, you must first export your site to XML. Since Googl
 
 Once you have your .xml file, run this command from your redmine directory:
 
-  rake redmine:migrate_from_google_code filename=\path\to\myproject_google-code-export.xml project=myproject
+  rake redmine:migrate_from_google_code filename=path/to/myproject_google-code-export.xml project=myproject
+
+To map Google Code users and statuses to Redmine users and statuses, edit config/mappings.yml and run:
+
+  rake redmine:migrate_from_google_code filename=path/to/myproject_google-code-export.xml project=myproject mappings=plugins/redmine_xml_import/config/mappings.yml
 
 === Source Forge
 

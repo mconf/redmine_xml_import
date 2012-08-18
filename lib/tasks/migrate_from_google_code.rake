@@ -29,12 +29,32 @@ namespace :redmine do
       require 'open-uri'
       
       include REXML
+
+      attr_accessor :mappings
       
       def initialize
         super
         
         # make google code id unique so we can import from other sites
         @id_format = 'gc-%s'
+      end
+
+      def init_mappings(mappings_file)
+        if mappings_file
+          @mappings = YAML.load_file(mappings_file)
+          if @mappings['user']
+            puts "User mappings:"
+            for key, value in mappings['user']
+              puts "  #{key} -> #{value}"
+            end
+          end
+          if @mappings['status']
+            puts "Status mappings:"
+            for key, value in mappings['status']
+              puts "  #{key} -> #{value}"
+            end
+          end
+        end
       end
 
       def migrate(filename, project)
@@ -65,7 +85,7 @@ namespace :redmine do
             issue.created_on = parse_datetime(el.elements['reportDate'].text)
             issue.tracker = find_tracker(labels, 'Type-Defect')
             issue.priority = find_priority(labels, 'Priority-Medium')
-            issue.status = find_status_for_issue(el.elements['status'].text)
+            issue.status = find_status(el.elements['status'].text)
             #issue.votes_value = el.attributes['stars']
             issue.fixed_version = find_version(labels, 'Milestone')
             issue.subject = CGI.unescapeHTML(el.elements['summary'].text)
@@ -320,20 +340,24 @@ namespace :redmine do
         return html
       end
 
-      def find_status_for_issue(name)
-        # google code does not have a concept of issue relations, so instead
-        # of setting status to Duplicate, set to invalid, and later on, create
-        # the duplicate relation.
-        if name == 'Duplicate'
-          name = 'Invalid'
-        end
-        return find_status(name)
-      end
-
       def find_status(name)
+        name = map_status_name(name)
         status = IssueStatus.find(:first, :conditions => { :name => name })
         raise "Unknown status: " + name unless status
         return status
+      end
+
+      def map_status_name(legacy_name)
+        return legacy_name unless @mappings and @mappings['status']
+
+        name = legacy_name
+        for key, value in @mappings['status']
+          if key == legacy_name
+            # puts "  - mapping status #{key} to #{value}"
+            name = value
+          end
+        end
+        name
       end
 
       def find_priority(labels, default_name=nil)
@@ -396,6 +420,7 @@ namespace :redmine do
       end
 
       def find_user_or_nil(login)
+        login = map_user(login)
         unless login.nil?
           User.find_by_login(login) || User.find_by_mail(login) || nil
         else
@@ -403,15 +428,37 @@ namespace :redmine do
         end
       end
 
+      def map_user(google_login)
+        return google_login unless @mappings and @mappings['user']
+
+        login = google_login
+        for key, value in @mappings['user']
+          if key == google_login
+            # puts "  - mapping user #{key} to #{value}"
+            login = value
+          end
+        end
+        login
+      end
+
     end
 
     filename = ENV['filename']
     project = ENV['project']
+    mappings = ENV['mappings']
 
     raise "filename not spcified" unless filename
     raise "project name not spcified" unless project
+    if mappings
+      unless File.exists?(mappings)
+        raise "mappings file does not exist"
+      end
+    else
+      puts "warning: mappings file not specified"
+    end
 
     gcm = GoogleCodeMigrate.new
+    gcm.init_mappings(mappings)
     gcm.migrate(filename, project)
   end
 end

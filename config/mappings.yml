@@ -1,0 +1,13 @@
+status:
+  Fixed: Resolved
+  Done: Resolved
+  New: New
+  Accepted: New
+  Started: New
+  WontFix: Rejected
+  Invalid: Rejected
+  Verified: Resolved
+  Duplicate: Closed
+user:
+  #user1...@gmail.com: user1-login
+  #user2-abc...@gmail.com: user2@gmail.com
